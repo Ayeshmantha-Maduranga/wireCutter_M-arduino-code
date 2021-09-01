@@ -1,0 +1,7 @@
+{
+    "configuration": "cpu=16MHzatmega328",
+    "board": "arduino:avr:pro",
+    "programmer": "arduino:avrisp",
+    "sketch": "wireCutter_M.ino",
+    "port": "COM10"
+}
