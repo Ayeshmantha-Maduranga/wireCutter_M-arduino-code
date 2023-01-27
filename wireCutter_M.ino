@@ -23,6 +23,8 @@
 #define Mrev  11
 #define Mfor  12
 
+#define CutDev  102
+
 const int ButRaw[] = { 18, 17, 16, 15 };
 
 //var
@@ -41,6 +43,16 @@ bool MotorUse = false;
 int wirelen = 0;
 int wireQty = 0;
 int Pre_wireQty = 0;
+int cutDelay = 0;
+
+unsigned long time_now1 = 0;
+unsigned long time_now2 = 0;
+bool timeShow1 = false;
+bool timeShow2 = false;
+
+bool FunMode = false;
+
+int pre_p_But = 0;
 
 void setup() {
   // initialize I/O pins
@@ -78,43 +90,35 @@ void setup() {
     NumRaw[1][i] = BLANK;
   }
 
-  //writeIntIntoEEPROM(0,200);
+  // writeIntIntoEEPROM(6,200);
   // writeIntIntoEEPROM(4,15);
 
   // set EEPROM val to disply
   SetNumber(0, 0, 1);
+  SetNumber(0, 1, 1);
   wirelen = readIntFromEEPROM(0);
   SetNumber(1, 0, wirelen);
   wireQty = readIntFromEEPROM(2);
   SetNumber(2, 0, wireQty);
   Pre_wireQty = readIntFromEEPROM(4);
   SetNumber(2, 1, Pre_wireQty);
+  cutDelay = readIntFromEEPROM(6);
 }
 
 void loop() {
+  //normal mode encode limiter
+  if (encoderValue / CutDev >= 9999) encoderValue = 99990;
+  else if (encoderValue / CutDev <= -999) encoderValue = -9990;
+
+  SetNumber(1, 1, encoderValue / CutDev);
   ShowNumber();
-  if (keyPad(0, 0)) {
-    cont += 1;
-    SetNumber(1, 1, cont);
-    digitalWrite(Mfor, HIGH);
-    delay(100);
-  }
-
-  if (keyPad(1, 0)) {
-    cont -= 1;
-    SetNumber(1, 1, cont);
-    digitalWrite(Mfor, LOW);
-    delay(100);
-  }
-
-  SetNumber(1, 1, encoderValue);
 
   //------------------ relays conrol --------------------
   if (keyPad(1, 3) && MotorUse == false) { //<----- forward
     digitalWrite(Mfor, HIGH);
     MotorUse = true;
   }
-  else {
+  else if (FunMode == false) {
     digitalWrite(Mfor, LOW);
     MotorUse = false;
   }
@@ -127,18 +131,115 @@ void loop() {
     MotorUse = false;
   }
   if (keyPad(5, 2) && MotorUse == false) { //<----- cut
+    encoderValue = 0;
     digitalWrite(cut, HIGH);
   }
-  else {
+  else if (FunMode == false) {
     digitalWrite(cut, LOW);
   }
 
-  //------------------ set val ----------------------
-  if (keyPad(5, 0)) {
-    //remove val up raw
-    SetNumber(0, 0, BLANK);
+  // ------------ automation mode funtion ----------------
+  if (keyPad(0, 3)) //<------ set funtion mode 
+  {
+    FunMode = true;
+  }
+  else if (keyPad(4, 3))
+  {
+    FunMode = false;
+    digitalWrite(Mfor, LOW);
+  }
+
+  if (FunMode)
+  {
+    // motor forwerd 
+    digitalWrite(Mfor, HIGH);
+    if ((encoderValue / CutDev) >= wirelen)
+    {
+      digitalWrite(cut, HIGH);
+      time_now1 = millis();
+      encoderValue = 0;
+      Pre_wireQty += 1;
+      SetNumber(2, 1, Pre_wireQty);
+      writeIntIntoEEPROM(4, Pre_wireQty);
+    }
+    if (millis() > time_now1 + cutDelay)
+    {
+      time_now1 = millis();
+      digitalWrite(cut, LOW);
+    }
+  }
+
+
+  // ------------ set cuting delay ---------------------
+  if (keyPad(3, 2))
+  {
+    // clean all desplay
     SetNumber(1, 0, BLANK);
     SetNumber(2, 0, BLANK);
+    SetNumber(1, 1, BLANK);
+    SetNumber(2, 1, BLANK);
+
+    //set val and t1 mark
+    NumRaw[1][4] = -1; // -
+    NumRaw[1][5] = -2; // t
+    while (1)
+    {
+      //refresh display
+      ShowNumber();
+
+      if (keyPad(6, 0)) { //<------ set val
+        //EEPROM set val
+        writeIntIntoEEPROM(6, cutDelay);
+
+        // set EEPROM val to disply
+        SetNumber(0, 0, 1);
+        SetNumber(0, 1, 1);
+        SetNumber(1, 0, wirelen);
+        SetNumber(2, 0, wireQty);
+        SetNumber(2, 1, Pre_wireQty);
+        break;
+      }
+      if (keyPad(5, 1)) //<------ clear
+      {
+        SetNumber(2, 1, 0);
+        cutDelay = 0;
+      }
+      if (keyPad(4, 2))//<------- cancel
+      {
+        // set EEPROM val to disply
+        SetNumber(0, 0, 1);
+        SetNumber(0, 1, 1);
+        SetNumber(1, 0, wirelen);
+        SetNumber(2, 0, wireQty);
+        SetNumber(2, 1, Pre_wireQty);
+        cutDelay = readIntFromEEPROM(6);
+        break;
+      }
+      //init number pad
+      cutDelay = numberPad(cutDelay);
+
+      //blink
+      if (millis() > time_now1 + 500)
+      {
+        time_now1 = millis();
+        if (timeShow1)
+        {
+          SetNumber(2, 1, cutDelay);
+          timeShow1 = false;
+        }
+        else
+        {
+          SetNumber(2, 1, BLANK);
+          timeShow1 = true;
+        }
+      }
+    }
+  }
+
+
+
+  //-------------------- set val ------------------------
+  if (keyPad(5, 0)) {
     //add val down raw
     SetNumber(0, 1, 1);
     SetNumber(1, 1, wirelen);
@@ -150,9 +251,11 @@ void loop() {
       ShowNumber();
 
       if (keyPad(6, 0)) { //<------ set complet
+        Pre_wireQty = 0;
         //EEPROM set val
         writeIntIntoEEPROM(0, wirelen);
         writeIntIntoEEPROM(2, wireQty);
+        writeIntIntoEEPROM(4, Pre_wireQty);
         // blink disply
 
         //remove val down raw
@@ -162,29 +265,168 @@ void loop() {
 
         // set EEPROM val to disply
         SetNumber(0, 0, 1);
-        wirelen = readIntFromEEPROM(0);
+        SetNumber(0, 1, 1);
         SetNumber(1, 0, wirelen);
-        wireQty = readIntFromEEPROM(2);
         SetNumber(2, 0, wireQty);
+        SetNumber(2, 1, Pre_wireQty);
         break;
       }
-      if (keyPad(5, 1)) { //<------ clear
+      if (keyPad(5, 1)) //<------ clear
+      {
         setLen = false;
         SetNumber(1, 1, 0);
         SetNumber(2, 1, 0);
+        wirelen = 0;
+        wireQty = 0;
+      }
+      if (keyPad(4, 2))//<------- cancel
+      {
+        //get val in rom 
+        wirelen = readIntFromEEPROM(0);
+        wireQty = readIntFromEEPROM(2);
+        Pre_wireQty = readIntFromEEPROM(4);
+        // set EEPROM val to disply
+        SetNumber(0, 0, 1);
+        SetNumber(0, 1, 1);
+        SetNumber(1, 0, wirelen);
+        SetNumber(2, 0, wireQty);
+        SetNumber(2, 1, Pre_wireQty);
+        break;
       }
 
-      if (setLen == false) {
+
+      if (setLen == false)
+      {
         //blink
-
-        //init number pad
-
-        if (keyPad(5, 1)) { //<---- set confirm
-
+        if (millis() > time_now1 + 500)
+        {
+          time_now1 = millis();
+          if (timeShow1)
+          {
+            SetNumber(1, 1, wirelen);
+            timeShow1 = false;
+          }
+          else
+          {
+            SetNumber(1, 1, BLANK);
+            timeShow1 = true;
+          }
         }
+        //init number pad
+        wirelen = numberPad(wirelen);
+
+        if (keyPad(6, 1) && wirelen != 0) //<---- confirm
+        {
+          SetNumber(1, 1, wirelen);
+          setLen = true;
+        }
+      }
+      else
+      {
+        //blink
+        if (millis() > time_now1 + 500)
+        {
+          time_now1 = millis();
+          if (timeShow1)
+          {
+            SetNumber(2, 1, wireQty);
+            timeShow1 = false;
+          }
+          else
+          {
+            SetNumber(2, 1, BLANK);
+            timeShow1 = true;
+          }
+        }
+        //init number pad
+        wireQty = numberPad(wireQty);
       }
     }
   }
+}
+
+int numberPad(int PreVal) {
+  if (keyPad(0, 0))//<--1
+  {
+    if (pre_p_But != 1) {
+      if (PreVal == 0) PreVal = 1;
+      else PreVal = (PreVal * 10) + 1; //Pressed twice
+    }
+    pre_p_But = 1;
+  }
+  else if (keyPad(1, 0))//<--2
+  {
+    if (pre_p_But != 2) {
+      if (PreVal == 0) PreVal = 2;
+      else PreVal = (PreVal * 10) + 2; //Pressed twice
+    }
+    pre_p_But = 2;
+  }
+  else if (keyPad(2, 0))//<--3
+  {
+    if (pre_p_But != 3) {
+      if (PreVal == 0) PreVal = 3;
+      else PreVal = (PreVal * 10) + 3; //Pressed twice
+    }
+    pre_p_But = 3;
+  }
+  else if (keyPad(3, 0))//<--4
+  {
+    if (pre_p_But != 4) {
+      if (PreVal == 0) PreVal = 4;
+      else PreVal = (PreVal * 10) + 4; //Pressed twice
+    }
+    pre_p_But = 4;
+  }
+  else if (keyPad(4, 0))//<--5
+  {
+    if (pre_p_But != 5) {
+      if (PreVal == 0) PreVal = 5;
+      else PreVal = (PreVal * 10) + 5; //Pressed twice
+    }
+    pre_p_But = 5;
+  }
+  else if (keyPad(0, 1))//<--6
+  {
+    if (pre_p_But != 6) {
+      if (PreVal == 0) PreVal = 6;
+      else PreVal = (PreVal * 10) + 6; //Pressed twice
+    }
+    pre_p_But = 6;
+  }
+  else if (keyPad(1, 1))//<--7
+  {
+    if (pre_p_But != 7) {
+      if (PreVal == 0) PreVal = 7;
+      else PreVal = (PreVal * 10) + 7; //Pressed twice
+    }
+    pre_p_But = 7;
+  }
+  else if (keyPad(2, 1))//<--8
+  {
+    if (pre_p_But != 8) {
+      if (PreVal == 0) PreVal = 8;
+      else PreVal = (PreVal * 10) + 8; //Pressed twice
+    }
+    pre_p_But = 8;
+  }
+  else if (keyPad(3, 1))//<--9
+  {
+    if (pre_p_But != 9) {
+      if (PreVal == 0) PreVal = 9;
+      else PreVal = (PreVal * 10) + 9; //Pressed twice
+    }
+    pre_p_But = 9;
+  }
+  else if (keyPad(4, 1))//<--0
+  {
+    if (pre_p_But != 0) {
+      if (PreVal == 0) PreVal = 0;
+      else PreVal = (PreVal * 10) + 0; //Pressed twice
+    }
+    pre_p_But = 0;
+  }
+  return PreVal;
 }
 
 void updateEncoder() {
@@ -201,7 +443,7 @@ void updateEncoder() {
   lastEncoded = encoded; //store this value for next time
 }
 
-void SetNumber(int DisplayNumX, int DisplayNumY, int num) 
+void SetNumber(int DisplayNumX, int DisplayNumY, int num)
 {
   int count = 0;
   bool num_abs = false;
@@ -211,7 +453,7 @@ void SetNumber(int DisplayNumX, int DisplayNumY, int num)
     num_abs = true;
   }
 
-  switch (DisplayNumX) 
+  switch (DisplayNumX)
   {
     // disply 0 ------------------------------------
     case 0:
@@ -221,7 +463,7 @@ void SetNumber(int DisplayNumX, int DisplayNumY, int num)
       NumRaw[DisplayNumY][1] = num % 10;
       break;
 
-    // disply 1 ------------------------------------
+      // disply 1 ------------------------------------
     case 1:
       if (num > 9999) num = 9999; // lemit out of range
       NumRaw[DisplayNumY][2] = BLANK;
@@ -236,10 +478,10 @@ void SetNumber(int DisplayNumX, int DisplayNumY, int num)
         count++;
         num = num / 10;    //divide num by 10. num /= 10 also a valid one
       }
-      if(num_abs) NumRaw[DisplayNumY][5 - count] = -1;
+      if (num_abs) NumRaw[DisplayNumY][5 - count] = -1;
       break;
 
-    // disply 2 ------------------------------------
+      // disply 2 ------------------------------------
     case 2:
       if (num > 9999) num = 9999; // lemit out of range
       NumRaw[DisplayNumY][6] = BLANK;
@@ -253,7 +495,7 @@ void SetNumber(int DisplayNumX, int DisplayNumY, int num)
         count++;
         num = num / 10;    //divide num by 10. num /= 10 also a valid one
       }
-      if(num_abs) NumRaw[DisplayNumY][5 - count] = -1;
+      if (num_abs) NumRaw[DisplayNumY][5 - count] = -1;
       break;
   }
 }
@@ -264,10 +506,24 @@ bool keyPad(int x, int y) {
   shiftOut(dataPin, clockPin, MSBFIRST, B00000000); // send data
   shiftOut(dataPin, clockPin, MSBFIRST, ~(1 << x)); // send data
   digitalWrite(latchPin, HIGH); // update outputs
+
+
   if (digitalRead(ButRaw[y]))
+  {
+    if (millis() > time_now2 + 100)
+    {
+      time_now2 = millis();
+      digitalWrite(alram, LOW);
+      pre_p_But = -1;
+    }
     return false;
+  }
   else
+  {
+    time_now2 = millis();
+    digitalWrite(alram, HIGH);
     return true;
+  }
 }
 
 void ShowNumber() {
@@ -302,7 +558,6 @@ void ShowNumber() {
       shiftOut(dataPin, clockPin, MSBFIRST, B11111111); // send data
       digitalWrite(latchPin, HIGH); // update display
     }
-
   }
 }
 
@@ -328,6 +583,7 @@ byte myfnNumToBits(int someNumber) {
     case 8: return B01111111; break;
     case 9: return B01101111; break;
     case -1: return B01000000; break;
+    case -2: return B01111000; break;
     default: B00000000; break;
   }
 }
